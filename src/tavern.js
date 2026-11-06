@@ -10,10 +10,22 @@
 //   - POST /api/presets/save（JSON：apiId、name、preset）
 //   - POST /api/settings/get 返回的 world_names
 //   - 扩展设置抽屉的容器 #extensions_settings2 / #extensions_settings 与 inline-drawer 样式
+//   - callGenericPopup 的字符串内容按 HTML 显示（所以 confirm 里先转义再把换行换成 <br>）
+//   - 网页「在酒馆中打开」：酒馆首页带 ?odysseia_import=… 时，参数在扩展加载时还在地址栏里
 //
 // 其余模块只通过 createTavernAdapter() 返回的对象访问酒馆，测试里换成假的 getContext/fetch 即可。
 
 export const MODULE_NAME = 'odysseia';
+
+/** 平台网页「在酒馆中打开」带的网址参数：逗号分隔的作品编号 */
+export const IMPORT_PARAM = 'odysseia_import';
+
+function escapeText(value) {
+  return String(value ?? '').replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+  );
+}
 
 export const DEFAULT_SETTINGS = Object.freeze({
   siteUrl: '',
@@ -94,6 +106,7 @@ async function readResponse(response, what) {
  *   toastr?: any,
  *   doc?: Document,
  *   confirmFallback?: (message: string) => boolean,
+ *   win?: {location: {href: string}, history: History},
  * }} [deps]
  */
 export function createTavernAdapter(deps = {}) {
@@ -101,6 +114,7 @@ export function createTavernAdapter(deps = {}) {
   const doFetch = deps.fetchImpl ?? ((...args) => globalThis.fetch(...args));
   const toast = () => deps.toastr ?? globalThis.toastr ?? null;
   const doc = () => deps.doc ?? globalThis.document;
+  const win = () => deps.win ?? globalThis.window;
 
   function ctx() {
     const context = getContext();
@@ -265,11 +279,15 @@ export function createTavernAdapter(deps = {}) {
       }
     },
 
-    /** 确认框：【实测】getContext().callGenericPopup + POPUP_TYPE.CONFIRM，拿不到用浏览器 confirm */
+    /**
+     * 确认框：【实测】getContext().callGenericPopup + POPUP_TYPE.CONFIRM，拿不到用浏览器 confirm。
+     * message 是纯文本（可能含作品标题等平台数据），交给酒馆前先转义，换行变 <br>。
+     */
     async confirm(message) {
       const context = getContext();
       if (context && typeof context.callGenericPopup === 'function' && context.POPUP_TYPE) {
-        const result = await context.callGenericPopup(message, context.POPUP_TYPE.CONFIRM);
+        const html = escapeText(message).replace(/\n/g, '<br>');
+        const result = await context.callGenericPopup(html, context.POPUP_TYPE.CONFIRM);
         const yes = context.POPUP_RESULT?.AFFIRMATIVE ?? 1;
         return result === yes || result === true;
       }
@@ -298,6 +316,31 @@ export function createTavernAdapter(deps = {}) {
       }
       // 插件可能在 APP_READY 之后才加载，兜底延时执行（run 只会跑一次）
       setTimeout(run, fallbackDelayMs);
+    },
+
+    // ---------- 网址参数 ----------
+
+    /** 当前酒馆网址里的 odysseia_import 参数值；没有返回 null */
+    readImportParam() {
+      try {
+        return new URL(win().location.href).searchParams.get(IMPORT_PARAM);
+      } catch {
+        return null;
+      }
+    },
+
+    /** 用 history.replaceState 把 odysseia_import 从地址栏去掉（不刷新页面），避免刷新时重复触发 */
+    clearImportParam() {
+      try {
+        const w = win();
+        const url = new URL(w.location.href);
+        if (!url.searchParams.has(IMPORT_PARAM)) return false;
+        url.searchParams.delete(IMPORT_PARAM);
+        w.history.replaceState(w.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+        return true;
+      } catch {
+        return false;
+      }
     },
 
     /** 把文件交给浏览器下载（不支持一键导入的类型用） */

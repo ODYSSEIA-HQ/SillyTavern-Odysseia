@@ -1,6 +1,6 @@
 // 纯逻辑：链接解析、来源识别、更新比对、角色卡 PNG 读写
 import { describe, expect, it } from 'vitest';
-import { normalizeSiteUrl, parseWorkRef, isInsecureRemote } from '../src/links.js';
+import { normalizeSiteUrl, parseWorkRef, parseWorkRefs, parseImportParam, isInsecureRemote, MAX_BATCH } from '../src/links.js';
 import {
   buildUpdateCheckItems,
   characterSource,
@@ -41,6 +41,40 @@ describe('parseWorkRef 作品链接解析', () => {
       expect(parseWorkRef(input)).toBeNull();
     },
   );
+});
+
+describe('parseWorkRefs 批量解析', () => {
+  it('换行、空格、逗号（含中文逗号、顿号）分隔，去重保持顺序，列出解析不了的', () => {
+    const text = [
+      'https://odysseia.example/works/w_1',
+      '  https://odysseia.example/share/works/w_2?from=x  ',
+      '',
+      'w_3, w_1，w_4、/works/w_2',
+      '看看这个 https://odysseia.example/users/9',
+    ].join('\n');
+    expect(parseWorkRefs(text)).toEqual({
+      ids: ['w_1', 'w_2', 'w_3', 'w_4'],
+      invalid: ['看看这个', 'https://odysseia.example/users/9'],
+    });
+  });
+
+  it('空输入', () => {
+    expect(parseWorkRefs('  \n ')).toEqual({ ids: [], invalid: [] });
+    expect(parseWorkRefs(null)).toEqual({ ids: [], invalid: [] });
+  });
+});
+
+describe('parseImportParam 网址参数', () => {
+  it('逗号分隔的作品编号，去重，忽略非法的', () => {
+    expect(parseImportParam('w_1,w_2, w_1,,<script>,https://x/works/w_9')).toEqual(['w_1', 'w_2']);
+    expect(parseImportParam('')).toEqual([]);
+    expect(parseImportParam(null)).toEqual([]);
+  });
+
+  it('最多取 MAX_BATCH 个', () => {
+    const many = Array.from({ length: MAX_BATCH + 5 }, (_, i) => `w${i}`).join(',');
+    expect(parseImportParam(many)).toHaveLength(MAX_BATCH);
+  });
 });
 
 describe('normalizeSiteUrl 平台地址', () => {

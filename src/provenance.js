@@ -92,7 +92,7 @@ export function buildUpdateCheckItems(installed) {
   return items;
 }
 
-/** 某个作品已经以什么形式装过（收件箱/链接导入时提示「已导入过」） */
+/** 某个作品已经以什么形式装过（链接导入时提示「已导入过」） */
 export function findInstalledByWork(installed, workId) {
   return installed.filter((entry) => entry.workId === workId);
 }

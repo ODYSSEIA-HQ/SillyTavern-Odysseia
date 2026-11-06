@@ -73,3 +73,41 @@ export function parseWorkRef(input) {
   const id = segments[index + 1];
   return id && ID_PATTERN.test(id) ? id : null;
 }
+
+/** 一次最多导入多少个作品（粘贴和网址参数共用） */
+export const MAX_BATCH = 50;
+
+/**
+ * 批量解析：用户一次粘贴的很多链接/编号（换行、空格、逗号、顿号分隔）。
+ * 每段用 parseWorkRef 解析，去重保持顺序；解析不了的原样列出来。
+ * @returns {{ids: string[], invalid: string[]}}
+ */
+export function parseWorkRefs(input) {
+  const ids = [];
+  const invalid = [];
+  const seen = new Set();
+  for (const token of String(input ?? '').split(/[\s,，、;；]+/)) {
+    if (!token) continue;
+    const id = parseWorkRef(token);
+    if (!id) {
+      if (!invalid.includes(token)) invalid.push(token);
+    } else if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return { ids, invalid };
+}
+
+/**
+ * 网址参数 odysseia_import 的值（逗号分隔的作品编号）→ 作品编号列表。
+ * 只认纯编号（不认链接），去重，最多 MAX_BATCH 个。
+ */
+export function parseImportParam(value) {
+  const ids = [];
+  for (const part of String(value ?? '').split(',')) {
+    const id = part.trim();
+    if (ID_PATTERN.test(id) && !ids.includes(id)) ids.push(id);
+  }
+  return ids.slice(0, MAX_BATCH);
+}

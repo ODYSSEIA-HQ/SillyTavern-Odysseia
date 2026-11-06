@@ -27,15 +27,16 @@ describe('请求形状', () => {
     expect(init.body).toBeUndefined();
   });
 
-  it('ack 发 JSON，204 返回 null；error 截断到 500 字', async () => {
-    const { api, fetchImpl } = setup(() => new Response(null, { status: 204 }));
-    expect(await api.ack('in 1', 'failed', 'x'.repeat(600))).toBeNull();
-    const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('https://p.example/api/v1/plugin/v1/inbox/in%201/ack');
-    expect(init.headers['Content-Type']).toBe('application/json');
-    const body = JSON.parse(init.body);
-    expect(body.status).toBe('failed');
-    expect(body.error).toHaveLength(500);
+  it('作品详情：编号做 URL 编码', async () => {
+    const { api, fetchImpl } = setup(() => jsonResponse(200, { work: { id: 'w 1' }, latestVersion: {}, files: [] }));
+    await api.work('w 1');
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://p.example/api/v1/plugin/v1/works/w%201');
+  });
+
+  it('不再有收件箱接口', () => {
+    const { api } = setup(() => jsonResponse(200, {}));
+    expect(api.inbox).toBeUndefined();
+    expect(api.ack).toBeUndefined();
   });
 
   it('检查更新按 500 条分批并合并结果', async () => {
@@ -53,7 +54,7 @@ describe('请求形状', () => {
   it('没登录不发请求', async () => {
     const fetchImpl = vi.fn();
     const api = createPluginApi({ apiRoot: 'https://p.example/api/v1', token: '', fetchImpl });
-    await expect(api.inbox()).rejects.toMatchObject({ code: 'not_configured' });
+    await expect(api.work('w')).rejects.toMatchObject({ code: 'not_configured' });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
@@ -65,7 +66,7 @@ describe('错误映射', () => {
     [403, { error: { code: 'restricted', message: 'x' } }, 'restricted', /R18\/受限作品/],
     [403, { error: { code: 'restricted_access_required', message: 'x' } }, 'restricted', /R18/],
     [403, { error: { code: 'forbidden', message: '不行' } }, 'forbidden', /不行/],
-    [404, null, 'not_found', /7 天/],
+    [404, null, 'not_found', /没找到这个作品/],
     [429, null, 'rate_limited', /频繁/],
     [502, null, 'server', /服务器出错/],
     [400, { error: { code: 'validation_failed', message: '参数不对' } }, 'bad_response', /参数不对/],
@@ -103,7 +104,7 @@ describe('错误映射', () => {
 
   it('返回的不是 JSON（地址填错，拿到网页）→ bad_response', async () => {
     const { api } = setup(() => new Response('<html></html>', { status: 200, headers: { 'Content-Type': 'text/html' } }));
-    await expect(api.inbox()).rejects.toMatchObject({ code: 'bad_response' });
+    await expect(api.me()).rejects.toMatchObject({ code: 'bad_response' });
   });
 
   it('describeError 兜底', () => {

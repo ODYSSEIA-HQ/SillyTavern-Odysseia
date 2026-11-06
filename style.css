@@ -207,3 +207,36 @@
 .odysseia-settings .odys-msg-info {
   background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 10%, transparent);
 }
+
+.odysseia-settings .odys-links {
+  width: 100%;
+  min-height: 5em;
+  margin: 0;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.odysseia-settings .odys-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.odysseia-settings .odys-status {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-weight: normal;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 14%, transparent);
+}
+
+.odysseia-settings .odys-batch-done .odys-status {
+  background: rgb(60 170 90 / 25%);
+}
+
+.odysseia-settings .odys-batch-failed .odys-status,
+.odysseia-settings .odys-batch-error .odys-status {
+  background: rgb(200 60 60 / 25%);
+}

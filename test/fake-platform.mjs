@@ -168,27 +168,7 @@ function buildData() {
     ['odp_dev_bob', { user: { id: 'u_bob', name: '鲍勃', avatar: null }, canViewR18: true }],
   ]);
 
-  const inboxItem = (id, workId, versionId, createdAt) => {
-    const w = works.get(workId);
-    const v = w.versions.find((x) => x.id === versionId);
-    const { restricted: _r, ...work } = w.work;
-    return {
-      id,
-      createdAt,
-      work,
-      version: { id: v.id, name: v.name, channel: v.channel },
-      files: v.files,
-    };
-  };
-  const inbox = new Map([
-    ['u_alice', [
-      inboxItem('in_1', 'w_lily', 'v_lily_1', '2026-10-31T08:00:00Z'),
-      inboxItem('in_2', 'w_harbor', 'v_harbor_1', '2026-10-31T08:05:00Z'),
-      inboxItem('in_3', 'w_theme', 'v_theme_1', '2026-10-31T08:10:00Z'),
-    ]],
-    ['u_bob', [inboxItem('in_9', 'w_secret', 'v_secret_1', '2026-10-31T09:00:00Z')]],
-  ]);
-  return { files, works, fileToWork, users, inbox, acks: [] };
+  return { files, works, fileToWork, users };
 }
 
 // ---------------- HTTP ----------------
@@ -262,24 +242,6 @@ export function createMockServer(options = {}) {
     let m;
 
     if (req.method === 'GET' && route === '/me') return send(res, 200, account);
-
-    if (req.method === 'GET' && route === '/inbox') {
-      return send(res, 200, data.inbox.get(account.user.id) ?? []);
-    }
-
-    if (req.method === 'POST' && (m = /^\/inbox\/([^/]+)\/ack$/.exec(route))) {
-      const body = await readBody(req);
-      if (!body || !['imported', 'failed', 'dismissed'].includes(body.status)) {
-        return fail(res, 422, 'validation_failed', 'status 不对');
-      }
-      const list = data.inbox.get(account.user.id) ?? [];
-      const item = list.find((i) => i.id === decodeURIComponent(m[1]));
-      if (!item) return fail(res, 404, 'not_found', '条目不存在或已过期');
-      data.acks.push({ userId: account.user.id, itemId: item.id, ...body });
-      // imported / dismissed 后从收件箱移除；failed 保留以便重试
-      if (body.status !== 'failed') data.inbox.set(account.user.id, list.filter((i) => i !== item));
-      return send(res, 204);
-    }
 
     if (req.method === 'GET' && (m = /^\/works\/([^/]+)$/.exec(route))) {
       const w = data.works.get(decodeURIComponent(m[1]));

@@ -89,8 +89,6 @@ export function createFakeApi(files = {}) {
       const value = files[id];
       return { bytes: ArrayBuffer.isView(value) ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength) : new TextEncoder().encode(JSON.stringify(value)), name: null, mime: null };
     }),
-    ack: vi.fn(async () => null),
-    inbox: vi.fn(async () => []),
     me: vi.fn(),
     work: vi.fn(),
     checkUpdates: vi.fn(async () => []),

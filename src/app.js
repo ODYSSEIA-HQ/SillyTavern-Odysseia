@@ -1,8 +1,8 @@
 // 插件主体：状态、动作、定时检查。对外依赖只有 tavern（适配层）和 createApi（平台客户端工厂）。
 
 import { createPluginApi, describeError, PluginApiError } from './api.js';
-import { applyUpdate, importInboxItem, importFile } from './importer.js';
-import { normalizeSiteUrl, parseWorkRef, DEFAULT_SITE_URL } from './links.js';
+import { applyUpdate, importWork } from './importer.js';
+import { normalizeSiteUrl, parseImportParam, parseWorkRefs, DEFAULT_SITE_URL, MAX_BATCH } from './links.js';
 import { buildUpdateCheckItems, collectInstalled, findInstalledByWork, isSupportedKind, KIND_LABELS } from './provenance.js';
 import { badgeText, renderDrawerShell, renderPanelBody } from './ui.js';
 import { isCheckDue, matchUpdates, newlyFound, updateKey } from './updates.js';
@@ -12,6 +12,59 @@ export const TICK_MS = 30 * 60 * 1000;
 
 function summarizeImported(results) {
   return results.map((r) => `${KIND_LABELS[r.kind]}「${r.name}」`).join('、');
+}
+
+/** 作品类型的中文名 */
+export function workTypeLabel(type) {
+  return KIND_LABELS[type] ?? (type ? String(type) : '作品');
+}
+
+/**
+ * 查到的作品 → 批量列表里的一行。
+ * ready：会导入；latest：已导入过这个版本，跳过；manual：没有能一键导入的文件，跳过。
+ */
+function describeWork(workId, data, installedAll) {
+  const installed = findInstalledByWork(installedAll, workId);
+  const supported = (data.files ?? []).filter((f) => isSupportedKind(f.kind));
+  const item = { workId, data, installed, status: 'ready', level: null, message: null };
+  if (!supported.length) {
+    item.status = 'manual';
+    item.level = 'info';
+    item.message = '没有可以一键导入的文件（角色卡/世界书/预设），可以下载后手动导入。';
+  } else if (data.latestVersion?.id && installed.some((e) => e.versionId === data.latestVersion.id)) {
+    item.status = 'latest';
+    item.level = 'info';
+    item.message = '已经导入过这个版本，跳过。';
+  }
+  return item;
+}
+
+/** 批量结果计数：成功 / 跳过 / 失败（查询失败也算失败） */
+export function countBatch(batch) {
+  const count = { ready: 0, done: 0, skipped: 0, failed: 0 };
+  for (const item of batch?.items ?? []) {
+    if (item.status === 'ready') count.ready += 1;
+    else if (item.status === 'done') count.done += 1;
+    else if (item.status === 'latest' || item.status === 'manual') count.skipped += 1;
+    else if (item.status === 'failed' || item.status === 'error') count.failed += 1;
+  }
+  return count;
+}
+
+/** 网页链接导入的确认文字：列出会导入的和不会导入的 */
+function urlConfirmMessage(batch) {
+  const lines = ['有网页请求把下面的作品导入到你的酒馆。请确认是你自己在平台上点的「在酒馆中打开」：', ''];
+  for (const item of batch.items.filter((i) => i.status === 'ready')) {
+    const { work, latestVersion } = item.data;
+    lines.push(`· ${work.title}（${workTypeLabel(work.type)}，${latestVersion?.name ?? '最新版本'}）`);
+  }
+  const rest = batch.items.filter((i) => i.status !== 'ready');
+  if (rest.length) {
+    lines.push('', '以下不会导入：');
+    for (const item of rest) lines.push(`· ${item.data?.work?.title ?? item.workId}：${item.message}`);
+  }
+  lines.push('', `导入这 ${countBatch(batch).ready} 个作品吗？`);
+  return lines.join('\n');
 }
 
 /**
@@ -24,10 +77,11 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
   const state = {
     busy: {},
     itemMsg: {},
-    inbox: null,
-    linkResult: null,
+    /** 批量导入：{source, invalid, items, phase: lookup|preview|importing|done, progress} */
+    batch: null,
+    /** 未登录时收到的网页导入请求，登录后再处理 */
+    pendingUrlIds: null,
     accountMsg: null,
-    inboxMsg: null,
     linkMsg: null,
     updatesMsg: null,
     siteDraft: null,
@@ -77,6 +131,25 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
     return false;
   }
 
+  async function runUrlImport(ids) {
+    state.pendingUrlIds = null;
+    const ok = await actions.previewLinks(ids.join('\n'), { source: 'url' });
+    const batch = state.batch;
+    if (!ok || !batch) return;
+    if (!countBatch(batch).ready) {
+      tavern.notify('warning', '网页请求导入的作品都不能导入，原因见扩展设置「Odysseia 平台」。');
+      return;
+    }
+    if (!(await tavern.confirm(urlConfirmMessage(batch)))) {
+      if (state.batch === batch) state.batch = null;
+      state.linkDraft = null;
+      tavern.notify('info', '已取消导入。');
+      render();
+      return;
+    }
+    await actions.importBatch();
+  }
+
   const actions = {
     async login(siteInput, tokenInput) {
       const site = normalizeSiteUrl(siteInput);
@@ -105,7 +178,7 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
         }
       });
       if (settings.account) {
-        await actions.refreshInbox();
+        if (state.pendingUrlIds) await runUrlImport(state.pendingUrlIds);
         await actions.checkUpdates({ silent: true });
       }
     },
@@ -115,8 +188,8 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
       settings.account = null;
       settings.pendingUpdates = [];
       tavern.saveSettings();
-      state.inbox = null;
-      state.linkResult = null;
+      state.batch = null;
+      state.pendingUrlIds = null;
       state.accountMsg = {
         level: 'info',
         text: '已登出。令牌本身仍然有效，如不再使用请到平台「设置 → 酒馆插件」里删除。',
@@ -124,58 +197,8 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
       render();
     },
 
-    async refreshInbox() {
-      await withBusy('inbox', async () => {
-        try {
-          state.inbox = await api().inbox();
-          state.inboxMsg = null;
-        } catch (err) {
-          if (!handleAuthError(err)) state.inboxMsg = { level: 'error', text: describeError(err) };
-        }
-      });
-    },
-
-    async importInbox(itemId) {
-      const item = state.inbox?.find((i) => i.id === itemId);
-      if (!item) return;
-      const key = `inbox:${itemId}`;
-      await withBusy(key, async () => {
-        try {
-          const result = await importInboxItem({ api: api(), tavern, settings, item });
-          if (result.errors.length) {
-            state.itemMsg[key] = { level: 'error', text: result.errors.map((e) => e.message).join('\n') };
-          } else {
-            state.itemMsg[key] = null;
-            tavern.notify('success', `已导入${summarizeImported(result.imported)}`);
-          }
-          if (result.manual.length) {
-            tavern.notify('info', `还有 ${result.manual.length} 个文件需要下载后手动导入。`);
-          }
-          if (result.acked === 'imported' && !result.manual.length) {
-            state.inbox = state.inbox.filter((i) => i.id !== itemId);
-          }
-        } catch (err) {
-          if (!handleAuthError(err)) state.itemMsg[key] = { level: 'error', text: describeError(err) };
-        }
-      });
-    },
-
-    async dismissInbox(itemId) {
-      const key = `inbox:${itemId}`;
-      await withBusy(key, async () => {
-        try {
-          await api().ack(itemId, 'dismissed');
-          state.inbox = (state.inbox ?? []).filter((i) => i.id !== itemId);
-        } catch (err) {
-          if (!handleAuthError(err)) state.itemMsg[key] = { level: 'error', text: describeError(err) };
-        }
-      });
-    },
-
     async downloadFile(fileId) {
-      const file =
-        state.inbox?.flatMap((i) => i.files ?? []).find((f) => f.id === fileId) ??
-        state.linkResult?.files?.find((f) => f.id === fileId);
+      const file = (state.batch?.items ?? []).flatMap((i) => i.data?.files ?? []).find((f) => f.id === fileId);
       if (!file) return;
       try {
         const { bytes, name, mime } = await api().downloadFile(file.id, file);
@@ -186,58 +209,139 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
       }
     },
 
-    async lookupLink(input) {
+    /**
+     * 第一步：解析粘贴的链接/编号，逐个查询作品，列出将要导入的内容，等用户确认。
+     * @returns {Promise<boolean>} 是否得到了可以确认的列表
+     */
+    async previewLinks(input, { source = 'paste' } = {}) {
       state.linkDraft = input;
-      const workId = parseWorkRef(input);
-      if (!workId) {
-        state.linkResult = null;
-        state.linkMsg = { level: 'error', text: '没认出作品链接。请粘贴形如 https://…/works/作品编号 的链接。' };
-        return render();
+      if (state.busy.batch || state.busy.lookup) return false;
+      const { ids, invalid } = parseWorkRefs(input);
+      state.batch = null;
+      if (!ids.length) {
+        state.linkMsg = {
+          level: 'error',
+          text: invalid.length
+            ? `没认出作品链接：${invalid.join('、')}。请粘贴形如 https://…/works/作品编号 的链接，或直接粘贴作品编号。`
+            : '请粘贴作品链接或作品编号，一行一个。',
+        };
+        render();
+        return false;
       }
+      if (ids.length > MAX_BATCH) {
+        state.linkMsg = { level: 'error', text: `一次最多导入 ${MAX_BATCH} 个作品，现在有 ${ids.length} 个，请分批粘贴。` };
+        render();
+        return false;
+      }
+      state.linkMsg = null;
+      const batch = { source, invalid, items: [], phase: 'lookup', progress: { done: 0, total: ids.length } };
+      state.batch = batch;
       await withBusy('lookup', async () => {
-        try {
-          const data = await api().work(workId);
-          const installed = findInstalledByWork(
-            collectInstalled({ characters: tavern.listCharacters(), sources: settings.sources }),
-            workId,
-          );
-          state.linkResult = { ...data, installed };
-          const supported = (data.files ?? []).filter((f) => isSupportedKind(f.kind));
-          state.linkMsg = supported.length
-            ? null
-            : { level: 'info', text: '这个作品没有可以一键导入的文件（角色卡/世界书/预设），可以下载后手动导入。' };
-        } catch (err) {
-          state.linkResult = null;
-          if (!handleAuthError(err)) {
-            state.linkMsg = { level: err?.code === 'restricted' ? 'warning' : 'error', text: describeError(err) };
+        const installedAll = collectInstalled({ characters: tavern.listCharacters(), sources: settings.sources });
+        for (const workId of ids) {
+          try {
+            batch.items.push(describeWork(workId, await api().work(workId), installedAll));
+          } catch (err) {
+            if (handleAuthError(err)) {
+              state.batch = null;
+              return;
+            }
+            batch.items.push({
+              workId,
+              status: 'error',
+              level: err?.code === 'restricted' ? 'warning' : 'error',
+              message: describeError(err),
+            });
           }
+          batch.progress.done += 1;
+          render();
         }
+        batch.phase = 'preview';
+      });
+      return state.batch === batch && batch.phase === 'preview';
+    },
+
+    /** 第二步：用户确认后依次导入。一个失败不影响其他。 */
+    async importBatch() {
+      const batch = state.batch;
+      if (!batch || batch.phase !== 'preview') return;
+      const todo = batch.items.filter((i) => i.status === 'ready');
+      if (!todo.length) return;
+      await withBusy('batch', async () => {
+        batch.phase = 'importing';
+        batch.progress = { done: 0, total: todo.length };
+        for (const item of todo) {
+          if (!settings.token) {
+            item.status = 'failed';
+            item.level = 'error';
+            item.message = '登录已失效，没有导入。';
+            batch.progress.done += 1;
+            continue;
+          }
+          item.status = 'importing';
+          render();
+          try {
+            const result = await importWork({ api: api(), tavern, settings, data: item.data });
+            const parts = [];
+            if (result.imported.length) parts.push(`已导入${summarizeImported(result.imported)}`);
+            parts.push(...result.errors.map((e) => e.message));
+            if (result.manual.length) parts.push(`另有 ${result.manual.length} 个文件需要下载后手动导入。`);
+            item.status = result.errors.length ? 'failed' : 'done';
+            item.level = result.errors.length ? 'error' : 'success';
+            item.message = parts.join('\n');
+          } catch (err) {
+            handleAuthError(err);
+            item.status = 'failed';
+            item.level = 'error';
+            item.message = describeError(err);
+          }
+          batch.progress.done += 1;
+          render();
+        }
+        batch.phase = 'done';
+        const count = countBatch(batch);
+        const text = `导入完成：成功 ${count.done} 个，跳过 ${count.skipped} 个，失败 ${count.failed} 个。`;
+        state.linkMsg = { level: count.failed ? 'warning' : 'success', text };
+        state.linkDraft = null;
+        tavern.notify(count.failed ? 'warning' : 'success', text);
       });
     },
 
-    async importLink() {
-      const r = state.linkResult;
-      if (!r) return;
-      await withBusy('link', async () => {
-        const imported = [];
-        const errors = [];
-        for (const file of (r.files ?? []).filter((f) => isSupportedKind(f.kind))) {
-          try {
-            imported.push(
-              await importFile({ api: api(), tavern, settings, workId: r.work.id, versionId: r.latestVersion.id, file }),
-            );
-          } catch (err) {
-            if (handleAuthError(err)) return;
-            errors.push(describeError(err));
-          }
+    cancelBatch() {
+      if (state.busy.batch || state.busy.lookup) return;
+      state.batch = null;
+      state.linkMsg = null;
+      render();
+    },
+
+    /**
+     * 平台网页「在酒馆中打开」：酒馆网址带 ?odysseia_import=作品ID1,作品ID2。
+     * 别的网站也能伪造这种链接，所以必须先弹确认框列出作品，用户同意才导入。
+     * 处理完后把参数从地址栏去掉，刷新不会重复触发。
+     */
+    async importFromUrl() {
+      const raw = tavern.readImportParam();
+      if (raw === null || raw === undefined) return;
+      try {
+        const ids = parseImportParam(raw);
+        if (!ids.length) {
+          tavern.notify('warning', '网址里的 Odysseia 导入参数看不懂，已忽略。');
+          return;
         }
-        if (imported.length) tavern.notify('success', `已导入${summarizeImported(imported)}`);
-        state.linkMsg = errors.length
-          ? { level: 'error', text: errors.join('\n') }
-          : { level: 'success', text: `已导入${summarizeImported(imported)}` };
-        state.linkResult = null;
-        state.linkDraft = null;
-      });
+        if (!settings.token || !settings.account) {
+          state.pendingUrlIds = ids;
+          state.accountMsg = {
+            level: 'warning',
+            text: `网页请求导入 ${ids.length} 个作品。请先登录，登录后会列出作品请你确认。`,
+          };
+          render();
+          tavern.notify('warning', `网页请求导入 ${ids.length} 个作品，请先在扩展设置「Odysseia 平台」里登录。`);
+          return;
+        }
+        await runUrlImport(ids);
+      } finally {
+        tavern.clearImportParam();
+      }
     },
 
     /**
@@ -320,19 +424,14 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
         return actions.login(value('#odys-site'), value('#odys-token'));
       case 'logout':
         return actions.logout();
-      case 'refresh-inbox':
-        return actions.refreshInbox();
-      case 'import-inbox':
-        return actions.importInbox(id);
-      case 'dismiss-inbox':
-      case 'done-inbox':
-        return actions.dismissInbox(id);
       case 'download':
         return actions.downloadFile(id);
-      case 'lookup-link':
-        return actions.lookupLink(value('#odys-link'));
-      case 'import-link':
-        return actions.importLink();
+      case 'preview-links':
+        return actions.previewLinks(value('#odys-link'));
+      case 'confirm-batch':
+        return actions.importBatch();
+      case 'cancel-batch':
+        return actions.cancelBatch();
       case 'check-updates':
         return actions.checkUpdates();
       case 'apply-update':
@@ -345,9 +444,20 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
   }
 
   function onKeydown(event) {
-    if (event.key !== 'Enter' || !(event.target instanceof HTMLInputElement)) return;
-    if (event.target.id === 'odys-token') root.querySelector('[data-action="login"]')?.click();
-    if (event.target.id === 'odys-link') root.querySelector('[data-action="lookup-link"]')?.click();
+    if (event.key !== 'Enter') return;
+    if (event.target instanceof HTMLInputElement && event.target.id === 'odys-token') {
+      root.querySelector('[data-action="login"]')?.click();
+    }
+    // 多行输入框里回车是换行；Ctrl/⌘ + 回车 = 点「导入」
+    if (event.target instanceof HTMLTextAreaElement && event.target.id === 'odys-link' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      root.querySelector('[data-action="preview-links"]')?.click();
+    }
+  }
+
+  /** 输入时记下草稿，面板重绘（比如后台检查更新）时不丢内容 */
+  function onInput(event) {
+    if (event.target instanceof HTMLTextAreaElement && event.target.id === 'odys-link') state.linkDraft = event.target.value;
   }
 
   return {
@@ -365,13 +475,15 @@ export function createApp({ tavern, createApi = createPluginApi, now = () => Dat
       container.appendChild(root);
       root.addEventListener('click', onClick);
       root.addEventListener('keydown', onKeydown);
+      root.addEventListener('input', onInput);
       render();
       return root;
     },
     start() {
       tavern.onAppReady(async () => {
+        // 平台网页「在酒馆中打开」带来的导入请求（先确认再导入）
+        await actions.importFromUrl();
         if (!settings.token) return;
-        await actions.refreshInbox();
         // 启动时总是查一次；之后由定时器按 6 小时间隔查
         await actions.checkUpdates({ silent: true });
       });

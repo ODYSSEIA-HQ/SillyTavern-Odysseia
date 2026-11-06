@@ -1,7 +1,7 @@
 // 适配层 + 导入流程：用假的 getContext / fetch
 import { describe, expect, it, vi } from 'vitest';
-import { createTavernAdapter, detectPresetApi, MODULE_NAME, stripExtension, uniqueName } from '../src/tavern.js';
-import { applyUpdate, importFile, importInboxItem, ManualImportError } from '../src/importer.js';
+import { createTavernAdapter, detectPresetApi, IMPORT_PARAM, MODULE_NAME, stripExtension, uniqueName } from '../src/tavern.js';
+import { applyUpdate, importFile, importWork, ManualImportError } from '../src/importer.js';
 import { readCardFromPng } from '../src/card.js';
 import { makeCardPng } from './fake-platform.mjs';
 import { createFakeApi, createFakeTavern } from './helpers.js';
@@ -75,6 +75,27 @@ describe('适配层', () => {
     expect(await tavern.confirm('继续？')).toBe(false);
     const plain = createTavernAdapter({ getContext: () => ({}), confirmFallback: () => true });
     expect(await plain.confirm('x')).toBe(true);
+  });
+
+  it('确认框：内容先转义再换行转 <br>，作品标题不能注入 HTML', async () => {
+    const { fake, tavern } = setup();
+    await tavern.confirm('导入<img src=x onerror=alert(1)>？\n第二行');
+    expect(fake.context.callGenericPopup).toHaveBeenLastCalledWith('导入&lt;img src=x onerror=alert(1)&gt;？<br>第二行', 2);
+  });
+
+  it('网址参数：读取 odysseia_import，replaceState 去掉它并保留其他参数', () => {
+    const replaceState = vi.fn();
+    const win = { location: { href: `https://tavern.local/?a=1&${IMPORT_PARAM}=w_1,w_2#top` }, history: { state: { s: 1 }, replaceState } };
+    const tavern = createTavernAdapter({ getContext: () => ({}), win });
+    expect(tavern.readImportParam()).toBe('w_1,w_2');
+    expect(tavern.clearImportParam()).toBe(true);
+    expect(replaceState).toHaveBeenCalledWith({ s: 1 }, '', '/?a=1#top');
+
+    const none = createTavernAdapter({ getContext: () => ({}), win: { location: { href: 'https://tavern.local/' }, history: { replaceState } } });
+    expect(none.readImportParam()).toBeNull();
+    replaceState.mockClear();
+    expect(none.clearImportParam()).toBe(false);
+    expect(replaceState).not.toHaveBeenCalled();
   });
 
   it('APP_READY 触发一次；兜底定时器不会重复执行', () => {
@@ -178,34 +199,27 @@ describe('导入流程', () => {
     expect(api.downloadFile).not.toHaveBeenCalled();
   });
 
-  it('收件箱：全部成功 ack imported；有失败 ack failed 带原因；全是不支持类型时不 ack', async () => {
+  it('导入整个作品：能导入的都导入，单个文件失败不影响其他，不支持的类型列出来', async () => {
     const { tavern, settings } = setup();
     const api = createFakeApi({ f1: makeCardPng(lilyCard('v1')), fw: book('v1') });
-    const item = (id, files) => ({ id, work: { id: 'w' }, version: { id: 'v' }, files });
+    const data = (files) => ({ work: { id: 'w' }, latestVersion: { id: 'v' }, files });
 
-    const ok = await importInboxItem({ api, tavern, settings, item: item('a', [{ id: 'f1', name: 'l.png', kind: 'character' }, { id: 'fw', name: 'b.json', kind: 'worldbook' }, { id: 't', name: 't.json', kind: 'theme' }]) });
-    expect(ok.imported).toHaveLength(2);
+    const ok = await importWork({ api, tavern, settings, data: data([{ id: 'f1', name: 'l.png', kind: 'character' }, { id: 'fw', name: 'b.json', kind: 'worldbook' }, { id: 't', name: 't.json', kind: 'theme' }]) });
+    expect(ok.imported.map((r) => r.kind)).toEqual(['character', 'worldbook']);
     expect(ok.manual).toHaveLength(1);
-    expect(ok.acked).toBe('imported');
-    expect(api.ack).toHaveBeenLastCalledWith('a', 'imported', undefined);
+    expect(ok.errors).toEqual([]);
+    expect(settings.sources.worldbook.b).toMatchObject({ workId: 'w', versionId: 'v' });
 
-    const bad = await importInboxItem({ api, tavern, settings, item: item('b', [{ id: 'missing', name: 'x.png', kind: 'character' }]) });
-    expect(bad.acked).toBe('failed');
-    expect(api.ack).toHaveBeenLastCalledWith('b', 'failed', '没有文件 missing');
-
-    api.ack.mockClear();
-    const manual = await importInboxItem({ api, tavern, settings, item: item('c', [{ id: 't', name: 't.json', kind: 'theme' }]) });
-    expect(manual.acked).toBeNull();
-    expect(api.ack).not.toHaveBeenCalled();
+    const mixed = await importWork({ api, tavern, settings, data: data([{ id: 'missing', name: 'x.png', kind: 'character' }, { id: 'fw', name: 'c.json', kind: 'worldbook' }]) });
+    expect(mixed.errors.map((e) => e.message)).toEqual(['没有文件 missing']);
+    expect(mixed.imported).toHaveLength(1);
   });
 
-  it('ack 失败不影响导入结果', async () => {
+  it('导入整个作品：令牌失效直接抛出', async () => {
     const { tavern, settings } = setup();
-    const api = createFakeApi({ fw: book('v1') });
-    api.ack.mockRejectedValueOnce(new Error('net'));
-    const result = await importInboxItem({ api, tavern, settings, item: { id: 'a', work: { id: 'w' }, version: { id: 'v' }, files: [{ id: 'fw', name: 'b.json', kind: 'worldbook' }] } });
-    expect(result.imported).toHaveLength(1);
-    expect(result.acked).toBeNull();
+    const api = createFakeApi({});
+    api.downloadFile.mockRejectedValueOnce(Object.assign(new Error('令牌无效'), { code: 'unauthorized' }));
+    await expect(importWork({ api, tavern, settings, data: { work: { id: 'w' }, latestVersion: { id: 'v' }, files: [{ id: 'a', name: 'a.json', kind: 'worldbook' }] } })).rejects.toThrow('令牌无效');
   });
 
   it('更新角色卡：覆盖原头像文件名（聊天记录跟着文件名走），来源更新到新版本，从待更新列表移除', async () => {

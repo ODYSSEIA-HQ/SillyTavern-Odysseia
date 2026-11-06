@@ -44,7 +44,7 @@ function errorFromResponse(status, body) {
     return new PluginApiError('forbidden', serverMessage || '没有权限执行这个操作。', extra);
   }
   if (status === 404) {
-    return new PluginApiError('not_found', '没找到：作品可能已删除，或者收件箱条目已过期（7 天）。', extra);
+    return new PluginApiError('not_found', '没找到这个作品：可能已被删除，或者链接有误。', extra);
   }
   if (status === 429) {
     return new PluginApiError('rate_limited', '请求太频繁，请稍后再试。', extra);
@@ -128,15 +128,6 @@ export function createPluginApi({ apiRoot, token, fetchImpl, timeoutMs = 30000 }
   return {
     /** @returns {Promise<{user:{id:string,name:string,avatar?:string}, canViewR18:boolean}>} */
     me: () => send('GET', '/me'),
-
-    /** @returns {Promise<Array>} 收件箱条目 */
-    inbox: () => send('GET', '/inbox'),
-
-    /** @param {'imported'|'failed'|'dismissed'} status */
-    ack: (itemId, status, error) =>
-      send('POST', `/inbox/${encodeURIComponent(itemId)}/ack`, {
-        body: error ? { status, error: String(error).slice(0, 500) } : { status },
-      }),
 
     /** @returns {Promise<{work, latestVersion, files}>} */
     work: (workId) => send('GET', `/works/${encodeURIComponent(workId)}`),

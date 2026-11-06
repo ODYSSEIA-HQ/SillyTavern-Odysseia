@@ -85,71 +85,73 @@ function renderAccount(state, settings) {
   </section>`;
 }
 
-function renderInbox(state) {
-  const items = state.inbox;
-  let body;
-  if (state.busy.inbox && !items) body = '<div class="odys-muted">正在读取…</div>';
-  else if (!items) body = '';
-  else if (!items.length) {
-    body = '<div class="odys-empty">收件箱是空的。在平台作品页点「发送到酒馆」，作品会出现在这里。</div>';
-  } else {
-    body = items
-      .map((item) => {
-        const supported = (item.files ?? []).some((f) => isSupportedKind(f.kind));
-        const busy = state.busy[`inbox:${item.id}`];
-        return `<div class="odys-item" data-item="${escapeHtml(item.id)}">
-          <div class="odys-item-head">
-            ${item.work.cover ? `<img class="odys-cover" src="${escapeHtml(item.work.cover)}" alt="" loading="lazy" />` : '<div class="odys-cover odys-cover-empty"></div>'}
-            <div class="odys-item-main">
-              <div class="odys-title">${escapeHtml(item.work.title)}</div>
-              <div class="odys-muted">${escapeHtml(item.version?.name ?? '')} ${channelTag(item.version?.channel)} · ${escapeHtml(formatTime(item.createdAt))}</div>
-            </div>
-          </div>
-          ${fileList(item.files ?? [])}
-          <div class="odys-row">
-            ${supported ? button('import-inbox', busy ? '正在导入…' : '导入', { id: item.id, primary: true, disabled: busy }) : ''}
-            ${button(supported ? 'dismiss-inbox' : 'done-inbox', supported ? '忽略' : '标记已处理', { id: item.id, disabled: busy })}
-          </div>
-          ${message(state.itemMsg[`inbox:${item.id}`])}
-        </div>`;
-      })
-      .join('');
-  }
-  return `<section class="odys-section">
-    <div class="odys-section-head">
-      <h4>收件箱${items?.length ? ` <span class="odys-count">${items.length}</span>` : ''}</h4>
-      ${button('refresh-inbox', state.busy.inbox ? '刷新中…' : '刷新', { disabled: state.busy.inbox })}
+const BATCH_STATUS = {
+  ready: '待导入',
+  importing: '正在导入…',
+  done: '成功',
+  latest: '跳过',
+  manual: '跳过',
+  error: '无法导入',
+  failed: '失败',
+};
+
+function batchItem(item) {
+  const work = item.data?.work;
+  const version = item.data?.latestVersion;
+  const showFiles = item.status === 'manual' || (item.data?.files ?? []).some((f) => !isSupportedKind(f.kind));
+  return `<div class="odys-item odys-batch-item odys-batch-${escapeHtml(item.status)}" data-work="${escapeHtml(item.workId)}">
+    <div class="odys-item-head">
+      ${work?.cover ? `<img class="odys-cover" src="${escapeHtml(work.cover)}" alt="" loading="lazy" />` : '<div class="odys-cover odys-cover-empty"></div>'}
+      <div class="odys-item-main">
+        <div class="odys-title">${escapeHtml(work?.title ?? item.workId)} <span class="odys-status">${escapeHtml(BATCH_STATUS[item.status] ?? '')}</span></div>
+        ${work ? `<div class="odys-muted"><span class="odys-kind">${escapeHtml(KIND_LABELS[work.type] ?? work.type ?? '作品')}</span> ${escapeHtml(version?.name ?? '')} ${channelTag(version?.channel)}</div>` : `<div class="odys-muted">作品编号 ${escapeHtml(item.workId)}</div>`}
+        ${item.installed?.length ? `<div class="odys-muted">已导入过：${item.installed.map((e) => escapeHtml(e.label)).join('、')}</div>` : ''}
+      </div>
     </div>
-    ${body}
-    ${message(state.inboxMsg)}
-  </section>`;
+    ${showFiles ? fileList(item.data.files ?? []) : ''}
+    ${item.message ? message({ level: item.level ?? 'info', text: item.message }) : ''}
+  </div>`;
+}
+
+function renderBatch(state) {
+  const b = state.batch;
+  if (!b) return '';
+  const ready = b.items.filter((i) => i.status === 'ready').length;
+  let head = '';
+  let actions = '';
+  if (b.phase === 'lookup') {
+    head = `正在查询作品 ${b.progress.done}/${b.progress.total}…`;
+  } else if (b.phase === 'preview') {
+    head = ready ? `将导入以下 ${ready} 个作品，确认后开始：` : '没有可以导入的作品。';
+    actions = `<div class="odys-row">
+      ${ready ? button('confirm-batch', `确认导入 ${ready} 个`, { primary: true }) : ''}
+      ${button('cancel-batch', ready ? '取消' : '关闭')}
+    </div>`;
+  } else if (b.phase === 'importing') {
+    head = `正在导入 ${b.progress.done}/${b.progress.total}…`;
+  } else {
+    head = '导入结果：';
+    actions = `<div class="odys-row">${button('cancel-batch', '关闭')}</div>`;
+  }
+  const invalid = b.invalid?.length
+    ? message({ level: 'warning', text: `以下内容没认出是作品链接，已跳过：\n${b.invalid.join('\n')}` })
+    : '';
+  return `<div class="odys-batch">
+    <div class="odys-muted odys-progress" role="status">${escapeHtml(head)}</div>
+    ${invalid}
+    ${b.items.map(batchItem).join('')}
+    ${actions}
+  </div>`;
 }
 
 function renderLink(state) {
-  const r = state.linkResult;
-  let result = '';
-  if (r) {
-    const supported = (r.files ?? []).some((f) => isSupportedKind(f.kind));
-    result = `<div class="odys-item">
-      <div class="odys-item-head">
-        ${r.work.cover ? `<img class="odys-cover" src="${escapeHtml(r.work.cover)}" alt="" loading="lazy" />` : '<div class="odys-cover odys-cover-empty"></div>'}
-        <div class="odys-item-main">
-          <div class="odys-title">${escapeHtml(r.work.title)}</div>
-          <div class="odys-muted">最新版本：${escapeHtml(r.latestVersion?.name ?? '')} ${channelTag(r.latestVersion?.channel)}</div>
-          ${r.installed?.length ? `<div class="odys-muted">已导入过：${r.installed.map((e) => escapeHtml(e.label)).join('、')}</div>` : ''}
-        </div>
-      </div>
-      ${fileList(r.files ?? [])}
-      ${supported ? `<div class="odys-row">${button('import-link', state.busy.link ? '正在导入…' : '导入', { primary: true, disabled: state.busy.link })}</div>` : ''}
-    </div>`;
-  }
+  const working = state.busy.lookup || state.busy.batch;
   return `<section class="odys-section">
     <h4>粘贴作品链接导入</h4>
-    <div class="odys-row">
-      <input id="odys-link" class="text_pole" type="text" placeholder="https://…/works/作品编号" value="${escapeHtml(state.linkDraft ?? '')}" />
-      ${button('lookup-link', state.busy.lookup ? '查找中…' : '查找', { disabled: state.busy.lookup })}
-    </div>
-    ${result}
+    <textarea id="odys-link" class="text_pole odys-links" rows="4" spellcheck="false" placeholder="粘贴作品页链接或作品编号，可以一次粘贴很多个，一行一个">${escapeHtml(state.linkDraft ?? '')}</textarea>
+    <div class="odys-hint">在平台网页点「复制全部导入链接」，粘贴到这里即可批量导入。</div>
+    <div class="odys-row">${button('preview-links', state.busy.lookup ? '查询中…' : '导入', { primary: true, disabled: working })}</div>
+    ${renderBatch(state)}
     ${message(state.linkMsg)}
   </section>`;
 }
@@ -189,7 +191,6 @@ export function renderPanelBody(state, settings) {
   const loggedIn = Boolean(settings.token && settings.account);
   return [
     renderAccount(state, settings),
-    loggedIn ? renderInbox(state) : '',
     loggedIn ? renderLink(state) : '',
     loggedIn ? renderUpdates(state, settings) : '',
   ].join('');
@@ -211,7 +212,7 @@ export function renderDrawerShell() {
   </div>`;
 }
 
-/** 徽标文字：只数更新（收件箱是用户自己发过来的，不算「提醒」） */
+/** 徽标文字：只数更新 */
 export function badgeText(settings) {
   const n = settings.token ? (settings.pendingUpdates ?? []).length : 0;
   return n ? `${n} 个更新` : '';

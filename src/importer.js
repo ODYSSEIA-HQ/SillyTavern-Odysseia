@@ -1,4 +1,4 @@
-// 导入流程：下载 → 写来源 → 交给酒馆 → 记来源表 → ack。
+// 导入流程：下载 → 写来源 → 交给酒馆 → 记来源表。
 // 只通过 api（平台客户端）和 tavern（适配层）对外打交道，测试里两者都可以换成假的。
 
 import { cardName, isPng, readCardFromPng, withOdysseiaSource, writeCardToPng } from './card.js';
@@ -98,36 +98,26 @@ export async function importFile({ api, tavern, settings, workId, versionId, fil
 }
 
 /**
- * 导入收件箱里的一条：能一键导入的文件全部导入，然后 ack。
- * 全部是不支持的类型时不 ack（留在收件箱里，用户下载后可以手动「标记已处理」）。
- * @returns {Promise<{imported:any[], errors:{file:any, message:string}[], manual:any[], acked:string|null}>}
+ * 导入一个作品的最新版本（works 接口返回的 {work, latestVersion, files}）：能一键导入的文件全部导入。
+ * 单个文件失败只记下原因，不影响其他文件；令牌失效（unauthorized）直接抛出，交给调用方处理。
+ * @returns {Promise<{imported:any[], errors:{file:any, message:string}[], manual:any[]}>}
  */
-export async function importInboxItem({ api, tavern, settings, item }) {
-  const files = item.files ?? [];
+export async function importWork({ api, tavern, settings, data }) {
+  const files = data.files ?? [];
   const manual = files.filter((f) => !isSupportedKind(f.kind));
-  const supported = files.filter((f) => isSupportedKind(f.kind));
   const imported = [];
   const errors = [];
-  for (const file of supported) {
+  for (const file of files.filter((f) => isSupportedKind(f.kind))) {
     try {
       imported.push(
-        await importFile({ api, tavern, settings, workId: item.work.id, versionId: item.version.id, file }),
+        await importFile({ api, tavern, settings, workId: data.work.id, versionId: data.latestVersion.id, file }),
       );
     } catch (err) {
+      if (err?.code === 'unauthorized') throw err;
       errors.push({ file, message: err?.message ?? String(err) });
     }
   }
-  let acked = null;
-  if (supported.length) {
-    acked = errors.length ? 'failed' : 'imported';
-    try {
-      await api.ack(item.id, acked, errors.length ? errors.map((e) => e.message).join('；') : undefined);
-    } catch {
-      // ack 失败不影响已经导入的内容；条目 7 天后自然过期
-      acked = null;
-    }
-  }
-  return { imported, errors, manual, acked };
+  return { imported, errors, manual };
 }
 
 /**
