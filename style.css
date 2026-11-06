@@ -1,0 +1,209 @@
+/* Odysseia 平台助手：只用 odys- 前缀，颜色尽量跟随酒馆主题变量 */
+
+.odysseia-settings .inline-drawer-header {
+  gap: 8px;
+}
+
+.odysseia-settings .odys-badge {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.8em;
+  background: var(--SmartThemeQuoteColor, #e18a24);
+  color: var(--SmartThemeBlurTintColor, #111);
+}
+
+.odysseia-settings .odys-badge[hidden] {
+  display: none;
+}
+
+.odysseia-settings .odys-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 0 10px;
+}
+
+.odysseia-settings .odys-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);
+}
+
+.odysseia-settings .odys-section h4 {
+  margin: 0;
+  font-size: 1em;
+}
+
+.odysseia-settings .odys-section-head,
+.odysseia-settings .odys-row,
+.odysseia-settings .odys-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.odysseia-settings .odys-section-head,
+.odysseia-settings .odys-account {
+  justify-content: space-between;
+}
+
+.odysseia-settings .odys-row .text_pole {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.odysseia-settings .odys-label {
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+.odysseia-settings .odys-hint,
+.odysseia-settings .odys-muted {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+.odysseia-settings .odys-empty {
+  font-size: 0.9em;
+  opacity: 0.8;
+  padding: 4px 0;
+}
+
+.odysseia-settings .odys-btn {
+  width: auto;
+  margin: 0;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
+.odysseia-settings .odys-btn-primary {
+  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #e18a24) 35%, transparent);
+}
+
+.odysseia-settings .odys-btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.odysseia-settings .odys-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);
+}
+
+.odysseia-settings .odys-item-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.odysseia-settings .odys-cover {
+  width: 42px;
+  height: 56px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.odysseia-settings .odys-cover-empty {
+  background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 12%, transparent);
+}
+
+.odysseia-settings .odys-item-main {
+  min-width: 0;
+}
+
+.odysseia-settings .odys-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.odysseia-settings .odys-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.odysseia-settings .odys-files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9em;
+}
+
+.odysseia-settings .odys-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.odysseia-settings .odys-kind,
+.odysseia-settings .odys-tag {
+  font-size: 0.8em;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 14%, transparent);
+  white-space: nowrap;
+  font-weight: normal;
+}
+
+.odysseia-settings .odys-kind-manual {
+  opacity: 0.65;
+}
+
+.odysseia-settings .odys-count {
+  font-size: 0.8em;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 18%, transparent);
+}
+
+.odysseia-settings .odys-count-accent {
+  background: var(--SmartThemeQuoteColor, #e18a24);
+  color: var(--SmartThemeBlurTintColor, #111);
+}
+
+.odysseia-settings .odys-changelog {
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  max-height: 8em;
+  overflow: auto;
+  opacity: 0.85;
+}
+
+.odysseia-settings .odys-msg {
+  font-size: 0.9em;
+  padding: 6px 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+
+.odysseia-settings .odys-msg-error {
+  background: rgb(200 60 60 / 22%);
+}
+
+.odysseia-settings .odys-msg-warning {
+  background: rgb(220 160 40 / 22%);
+}
+
+.odysseia-settings .odys-msg-success {
+  background: rgb(60 170 90 / 20%);
+}
+
+.odysseia-settings .odys-msg-info {
+  background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 10%, transparent);
+}

@@ -1,0 +1,7 @@
+{
+  "name": "sillytavern-odysseia",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run" },
+  "devDependencies": { "jsdom": "^25.0.0", "vitest": "^3.0.0" }
+}

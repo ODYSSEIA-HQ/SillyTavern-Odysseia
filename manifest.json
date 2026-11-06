@@ -1,0 +1,12 @@
+{
+  "display_name": "Odysseia 平台助手",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "Odysseia",
+  "version": "0.1.0",
+  "homePage": "https://github.com/ODYSSEIA-HQ/SillyTavern-Odysseia",
+  "auto_update": false
+}
